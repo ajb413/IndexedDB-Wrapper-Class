@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>IndexedDB</title>
+</head>
+
+<body>
+  <p>
+    Store, Fetch, then Play Sound with IndexedDB. Uses a wrapper class to simplify browser window.indexedDB down to a simple interface like window.localStorage.
+  </p>
+  <button id="buttonX">Click Me</button>
+</body>
+
+<script type="text/javascript" src="./sound-string.js"></script>
+<script type="text/javascript">
+
+class IndexedDBWrapper {
+  constructor(dbName='myDatabase', storeName='myStore', version=1) {
+    this.dbName = dbName;
+    this.storeName = storeName;
+    this.version = version;
+    this.db = null;
+
+    // Initialize the database
+    this.init();
+  }
+
+  async init() {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(this.dbName, this.version);
+
+      request.onerror = () => reject(request.error);
+
+      request.onsuccess = () => {
+        this.db = request.result;
+        resolve();
+      };
+
+      request.onupgradeneeded = (event) => {
+        const db = event.target.result;
+        if (!db.objectStoreNames.contains(this.storeName)) {
+          db.createObjectStore(this.storeName, { keyPath: 'id' });
+        }
+      };
+    });
+  }
+
+  async write(key, data) {
+    await this.ensureInitialized();
+    return new Promise((resolve, reject) => {
+      const transaction = this.db.transaction([this.storeName], 'readwrite');
+      const store = transaction.objectStore(this.storeName);
+      
+      // First delete any existing entry
+      const deleteRequest = store.delete(key);
+      
+      deleteRequest.onsuccess = () => {
+        // Then add the new data
+        const dataWithKey = { ...data, id: key };
+        const putRequest = store.put(dataWithKey);
+
+        putRequest.onerror = () => reject(putRequest.error);
+        putRequest.onsuccess = () => resolve();
+      };
+
+      deleteRequest.onerror = () => reject(deleteRequest.error);
+    });
+  }
+
+  async read(key) {
+    await this.ensureInitialized();
+    return new Promise((resolve, reject) => {
+      const transaction = this.db.transaction([this.storeName], 'readonly');
+      const store = transaction.objectStore(this.storeName);
+      const request = store.get(key);
+
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const result = request.result;
+        if (result && 'id' in result) {
+          const { id, ...data } = result;
+          resolve(data);
+        } else {
+          resolve(result);
+        }
+      };
+    });
+  }
+
+  async ensureInitialized() {
+    if (!this.db) {
+      await this.init();
+    }
+  }
+}
+
+const b64Mp3String = window.b64StringSound;
+
+const buttonX = document.getElementById('buttonX');
+
+buttonX.onclick = async () => {
+  // Create instance
+  const db = new IndexedDBWrapper('myDb', 'sounds');
+
+  // Writing data
+  try {
+    await db.write('sound1', { file: b64Mp3String });
+    console.log('Data written successfully');
+  } catch (error) {
+    console.error('Error writing data:', error);
+  }
+
+  // Reading data
+  try {
+    const data = await db.read('sound1');
+    console.log('Read data:', data);
+
+    const audio = new Audio();
+    audio.src = 'data:audio/wav;base64,' + data.file;
+    audio.play();
+
+  } catch (error) {
+    console.error('Error reading data:', error);
+  }
+};
+
+</script>
+</html>
